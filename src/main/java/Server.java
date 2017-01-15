@@ -14,15 +14,22 @@ import com.google.inject.Module;
 import io.undertow.Handlers;
 import io.undertow.Undertow;
 import io.undertow.UndertowOptions;
+import io.undertow.predicate.Predicate;
+import io.undertow.predicate.Predicates;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
 import io.undertow.server.handlers.PathHandler;
 import io.undertow.server.handlers.PathTemplateHandler;
+import io.undertow.server.handlers.PredicateHandler;
+import io.undertow.server.handlers.resource.ClassPathResourceManager;
+import io.undertow.server.handlers.resource.PathResourceManager;
+import io.undertow.server.handlers.resource.ResourceHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xnio.Options;
 
 import java.io.IOException;
+import java.nio.file.Paths;
 
 public class Server {
     static final Logger logger = LoggerFactory.getLogger(Server.class);
@@ -65,11 +72,16 @@ public class Server {
             }
         };
         PathHandler mainHandler = Handlers.path()
-                .addPrefixPath("/", handler
-                );
+                .addPrefixPath("/", handler)
+                .addExactPath("/json", exchange -> {
+                    exchange.getResponseSender().send("{\"name\" : \"Hello from server\"}");
+                    exchange.endExchange();
+                });
 
         final PathTemplateHandler templateHandler = Handlers.pathTemplate().add("index", handler);
 
+        HttpHandler resourceHandler = Handlers.resource(new ClassPathResourceManager(Thread.currentThread().getContextClassLoader()));
+        PredicateHandler predicateHandler = new PredicateHandler(Predicates.suffixes(".css", ".js"), resourceHandler, mainHandler);
 
         if (handler == null) {
             logger.warn("No route handler provider available in the classpath");
@@ -85,6 +97,7 @@ public class Server {
                     .setServerOption(UndertowOptions.RECORD_REQUEST_START_TIME, Boolean.FALSE)
                     .setHandler(Handlers.header(mainHandler, "Server", "Undertow"))
                     .setHandler(Handlers.header(templateHandler, "Template", "Undertow"))
+                    .setHandler(Handlers.header(predicateHandler, "Css/Js", "Resource"))
                     .setWorkerThreads(200).build();
             server.start();
         }
