@@ -3,8 +3,10 @@
 // (powered by Fernflower decompiler)
 //
 
+import com.github.jknack.handlebars.Context;
 import com.github.jknack.handlebars.Handlebars;
 import com.github.jknack.handlebars.Template;
+import com.github.jknack.handlebars.context.MapValueResolver;
 import com.github.jknack.handlebars.io.ClassPathTemplateLoader;
 import com.github.jknack.handlebars.io.TemplateLoader;
 import com.google.inject.Binder;
@@ -14,26 +16,26 @@ import com.google.inject.Module;
 import io.undertow.Handlers;
 import io.undertow.Undertow;
 import io.undertow.UndertowOptions;
-import io.undertow.predicate.Predicate;
 import io.undertow.predicate.Predicates;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
 import io.undertow.server.handlers.PathHandler;
 import io.undertow.server.handlers.PathTemplateHandler;
 import io.undertow.server.handlers.PredicateHandler;
+import io.undertow.server.handlers.cache.DirectBufferCache;
+import io.undertow.server.handlers.resource.CachingResourceManager;
 import io.undertow.server.handlers.resource.ClassPathResourceManager;
-import io.undertow.server.handlers.resource.PathResourceManager;
-import io.undertow.server.handlers.resource.ResourceHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xnio.Options;
 
 import java.io.IOException;
-import java.nio.file.Paths;
+import java.util.Collections;
+import java.util.HashMap;
 
 public class Server {
-    static final Logger logger = LoggerFactory.getLogger(Server.class);
-    static Undertow server = null;
+    private static final Logger logger = LoggerFactory.getLogger(Server.class);
+    private static Undertow server = null;
 
     public Server() {
     }
@@ -58,20 +60,24 @@ public class Server {
             throw new RuntimeException();
         }
 
-        Injector injector = Guice.createInjector(new SimpleModule());
-        Service service = injector.getInstance(Service.class);
+        final Injector injector = Guice.createInjector(new SimpleModule());
+        final Service service = injector.getInstance(Service.class);
         service.hello();
 
         final HttpHandler handler = new HttpHandler() {
             public void handleRequest(HttpServerExchange exchange) {
                 try {
-                    exchange.getResponseSender().send(template.apply("Handlebars.java"));
+                    final HashMap<Object, Object> model = new HashMap<>();
+                    model.put("value", "Handlebars.java");
+                    model.put("title", Collections.singletonMap("name", "Super title"));
+                    final String data = template.apply(model);
+                    exchange.getResponseSender().send(data);
                 } catch (IOException e) {
                     throw new RuntimeException();
                 }
             }
         };
-        PathHandler mainHandler = Handlers.path()
+        final PathHandler mainHandler = Handlers.path()
                 .addPrefixPath("/", handler)
                 .addExactPath("/json", exchange -> {
                     exchange.getResponseSender().send("{\"name\" : \"Hello from server\"}");
@@ -80,27 +86,28 @@ public class Server {
 
         final PathTemplateHandler templateHandler = Handlers.pathTemplate().add("index", handler);
 
-        HttpHandler resourceHandler = Handlers.resource(new ClassPathResourceManager(Thread.currentThread().getContextClassLoader()));
-        PredicateHandler predicateHandler = new PredicateHandler(Predicates.suffixes(".css", ".js"), resourceHandler, mainHandler);
+        final ClassPathResourceManager resourceManager = new ClassPathResourceManager(Thread.currentThread().getContextClassLoader());
+        final CachingResourceManager cachingResourceManager =
+                new CachingResourceManager(Integer.MAX_VALUE, Long.MAX_VALUE,
+                        new DirectBufferCache(Integer.MAX_VALUE / 1000, Integer.MAX_VALUE / 100, Integer.MAX_VALUE),
+                        resourceManager,
+                        Integer.MAX_VALUE);
+        final HttpHandler resourceHandler = Handlers.resource(cachingResourceManager);
+        final PredicateHandler predicateHandler = new PredicateHandler(Predicates.suffixes(".css", ".js", ".jpeg"), resourceHandler, mainHandler);
 
-        if (handler == null) {
-            logger.warn("No route handler provider available in the classpath");
-        } else {
-
-            server = Undertow.builder()
-                    .addHttpListener(8081, "0.0.0.0")
-                    .setBufferSize(16384)
-                    .setIoThreads(Runtime.getRuntime().availableProcessors() * 2)
-                    .setSocketOption(Options.BACKLOG, 10000)
-                    .setServerOption(UndertowOptions.ALWAYS_SET_KEEP_ALIVE, Boolean.FALSE)
-                    .setServerOption(UndertowOptions.ALWAYS_SET_DATE, Boolean.TRUE)
-                    .setServerOption(UndertowOptions.RECORD_REQUEST_START_TIME, Boolean.FALSE)
-                    .setHandler(Handlers.header(mainHandler, "Server", "Undertow"))
-                    .setHandler(Handlers.header(templateHandler, "Template", "Undertow"))
-                    .setHandler(Handlers.header(predicateHandler, "Css/Js", "Resource"))
-                    .setWorkerThreads(200).build();
-            server.start();
-        }
+        server = Undertow.builder()
+                .addHttpListener(8081, "0.0.0.0")
+                .setBufferSize(16384)
+                .setIoThreads(Runtime.getRuntime().availableProcessors() * 2)
+                .setSocketOption(Options.BACKLOG, 10000)
+                .setServerOption(UndertowOptions.ALWAYS_SET_KEEP_ALIVE, Boolean.FALSE)
+                .setServerOption(UndertowOptions.ALWAYS_SET_DATE, Boolean.TRUE)
+                .setServerOption(UndertowOptions.RECORD_REQUEST_START_TIME, Boolean.FALSE)
+                .setHandler(Handlers.header(mainHandler, "Server", "Undertow"))
+                .setHandler(Handlers.header(templateHandler, "Template", "Undertow"))
+                .setHandler(Handlers.header(predicateHandler, "Css/Js", "Resource"))
+                .setWorkerThreads(200).build();
+        server.start();
     }
 
     public static void stop() {

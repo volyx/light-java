@@ -1,10 +1,12 @@
 //document.getElementsByTagName("h1");
 
-var s = document.getElementsByTagName('h1')[0].style;
-s.opacity = 1;
+var s = document.getElementsByTagName('img')[0].style;
+s.opacity = 0;
 
 (function fade() {
-    (s.opacity-=.1) < 0 ? s.display="none" :setTimeout(fade,40)
+    var op = parseFloat(s.opacity);
+    (op+=.1) < 1  ? setTimeout(fade,40) : 0;
+    s.opacity = op;
 })();
 
 
@@ -38,3 +40,13 @@ getJSON('/json', function (err, data) {
     document.querySelector("#text").innerHTML = data.name;
 });
 
+
+var button = document.getElementsByTagName('button')[0];
+
+button.addEventListener("click", function (event) {
+    scrollTop();
+});
+
+function scrollTop() {
+    document.body.scrollTop = document.documentElement.scrollTop = 0;
+}
